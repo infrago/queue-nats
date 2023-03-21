@@ -1,2 +1,2 @@
 # queue-nats
-infra.go nats queue driver.
+infra.Go nats queue driver.
