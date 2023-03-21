@@ -1,6 +1,7 @@
 package queue_nats
 
 import (
+	"github.com/infrago/infra"
 	"github.com/infrago/queue"
 )
 
@@ -13,9 +14,10 @@ func JsDriver() queue.Driver {
 }
 
 func init() {
+	infra.Register("nats", Driver())
+
 	jsd := JsDriver()
-	queue.Register("nats", Driver())
-	queue.Register("najs", jsd)
-	queue.Register("natsjs", jsd)
-	queue.Register("nats-js", jsd)
+	infra.Register("najs", jsd)
+	infra.Register("natsjs", jsd)
+	infra.Register("nats-js", jsd)
 }
