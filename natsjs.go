@@ -172,7 +172,7 @@ func (this *natsjsConnect) Start() error {
 		sub, err := js.QueueSubscribeSync(name, consumer, subOpts...)
 
 		// fmt.Println("xxx", consumer)
-		// fmt.Println("qqq", info.Name, err)
+		// fmt.Println("qqq", infname, err)
 
 		if err != nil {
 			return err
