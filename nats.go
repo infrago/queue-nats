@@ -231,7 +231,7 @@ func (this *natsConnect) publish(msg *nats.Msg) error {
 	return err
 }
 
-func (this *natsConnect) Enqueue(name string, data []byte) error {
+func (this *natsConnect) Publish(name string, data []byte) error {
 	msg := nats.NewMsg(name)
 	msg.Data = data
 
@@ -241,9 +241,9 @@ func (this *natsConnect) Enqueue(name string, data []byte) error {
 	return this.publish(msg)
 }
 
-// DeferredEnqueue
+// DeferredPublish
 // 此方法不可靠，有丢消息的可能
-func (this *natsConnect) DeferredEnqueue(name string, data []byte, delay time.Duration) error {
+func (this *natsConnect) DeferredPublish(name string, data []byte, delay time.Duration) error {
 	msg := nats.NewMsg(name)
 	msg.Data = data
 

@@ -256,7 +256,7 @@ func (this *natsjsConnect) Stop() error {
 	return nil
 }
 
-func (this *natsjsConnect) Enqueue(name string, data []byte) error {
+func (this *natsjsConnect) Publish(name string, data []byte) error {
 	if this.client == nil {
 		return errInvalidConnection
 	}
@@ -274,7 +274,7 @@ func (this *natsjsConnect) Enqueue(name string, data []byte) error {
 	return err
 }
 
-func (this *natsjsConnect) DeferredEnqueue(name string, data []byte, delay time.Duration) error {
+func (this *natsjsConnect) DeferredPublish(name string, data []byte, delay time.Duration) error {
 	if this.client == nil {
 		return errInvalidConnection
 	}
