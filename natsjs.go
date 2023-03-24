@@ -171,9 +171,6 @@ func (this *natsjsConnect) Start() error {
 
 		sub, err := js.QueueSubscribeSync(name, consumer, subOpts...)
 
-		// fmt.Println("xxx", consumer)
-		// fmt.Println("qqq", infname, err)
-
 		if err != nil {
 			return err
 		}
@@ -201,8 +198,6 @@ func (this *natsjsConnect) loop(i int, name string, sub *nats.Subscription) {
 				break
 			}
 		}
-
-		// fmt.Println("queue", name, i)
 
 		req := queue.Request{
 			name, msg.Data, 1, time.Now(),

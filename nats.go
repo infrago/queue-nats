@@ -164,7 +164,6 @@ func (this *natsConnect) Start() error {
 				if after > 0 && after > now.Unix() {
 					time.Sleep(time.Second)
 					this.publish(msg)
-					fmt.Println("pub", msg.Subject)
 					continue //跳过
 				}
 
