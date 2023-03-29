@@ -27,7 +27,7 @@ type (
 		client *nats.Conn
 		stream nats.JetStreamContext
 
-		queues   []queue.Info
+		queues   []string
 		subs     []*nats.Subscription
 		exitChan chan struct{}
 	}
@@ -81,7 +81,7 @@ func (driver *natsjsDriver) Connect(inst *queue.Instance) (queue.Connect, error)
 
 	return &natsjsConnect{
 		instance: inst, setting: setting,
-		queues: make([]queue.Info, 0),
+		queues: make([]string, 0),
 		subs:   make([]*nats.Subscription, 0),
 	}, nil
 }
@@ -138,11 +138,11 @@ func (this *natsjsConnect) Close() error {
 	return nil
 }
 
-func (this *natsjsConnect) Register(info queue.Info) error {
+func (this *natsjsConnect) Register(name string) error {
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 
-	this.queues = append(this.queues, info)
+	this.queues = append(this.queues, name)
 
 	return nil
 }
@@ -155,13 +155,13 @@ func (this *natsjsConnect) Start() error {
 
 	js := this.stream
 
-	for i, info := range this.queues {
-		localInfo := info
+	for i, nnnnn := range this.queues {
+		qName := nnnnn
 
 		//订阅要前置，要不然触发器会先执行，这里还没订好
 
-		name := subName(localInfo.Name, this.setting.Stream)
-		consumer := subConsumer(localInfo.Name, this.setting.Stream)
+		name := subName(qName, this.setting.Stream)
+		consumer := subConsumer(qName, this.setting.Stream)
 
 		subOpts := []nats.SubOpt{
 			nats.Durable(consumer),
@@ -179,7 +179,7 @@ func (this *natsjsConnect) Start() error {
 
 		//循环放在多线程里跑
 		this.instance.Submit(func() {
-			this.loop(i, localInfo.Name, sub)
+			this.loop(i, qName, sub)
 		})
 	}
 

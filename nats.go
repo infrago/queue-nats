@@ -25,7 +25,7 @@ type (
 		client *nats.Conn
 		stream nats.JetStreamContext
 
-		queues []queue.Info
+		queues []string
 		subs   []*nats.Subscription
 	}
 	//配置文件
@@ -75,7 +75,7 @@ func (driver *natsDriver) Connect(inst *queue.Instance) (queue.Connect, error) {
 
 	return &natsConnect{
 		instance: inst, setting: setting,
-		queues: make([]queue.Info, 0),
+		queues: make([]string, 0),
 		subs:   make([]*nats.Subscription, 0),
 	}, nil
 }
@@ -111,11 +111,11 @@ func (this *natsConnect) Close() error {
 	return nil
 }
 
-func (this *natsConnect) Register(info queue.Info) error {
+func (this *natsConnect) Register(name string) error {
 	this.mutex.Lock()
 	defer this.mutex.Unlock()
 
-	this.queues = append(this.queues, info)
+	this.queues = append(this.queues, name)
 
 	return nil
 }
@@ -128,11 +128,9 @@ func (this *natsConnect) Start() error {
 
 	nc := this.client
 
-	for _, info := range this.queues {
-		// localInfo := info
-
+	for _, nnnnn := range this.queues {
 		//订阅前置，不能在子线程里订阅
-		name := info.Name
+		name := nnnnn
 		sub, err := nc.QueueSubscribeSync(name, name)
 		if err != nil {
 			return err
@@ -241,7 +239,6 @@ func (this *natsConnect) Publish(name string, data []byte) error {
 }
 
 // DeferredPublish
-// 此方法不可靠，有丢消息的可能
 func (this *natsConnect) DeferredPublish(name string, data []byte, delay time.Duration) error {
 	msg := nats.NewMsg(name)
 	msg.Data = data
