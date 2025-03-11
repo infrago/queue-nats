@@ -35,6 +35,7 @@ type (
 	natsjsSetting struct {
 		Stream   string
 		Url      string
+		Token    string
 		Username string
 		Password string
 	}
@@ -63,6 +64,10 @@ func (driver *natsjsDriver) Connect(inst *queue.Instance) (queue.Connect, error)
 		setting.Stream = strings.ToUpper(vv)
 	}
 
+	if vv, ok := inst.Setting["token"].(string); ok {
+		setting.Token = vv
+	}
+
 	if vv, ok := inst.Config.Setting["user"].(string); ok {
 		setting.Username = vv
 	}
@@ -89,6 +94,9 @@ func (driver *natsjsDriver) Connect(inst *queue.Instance) (queue.Connect, error)
 // 打开连接
 func (this *natsjsConnect) Open() error {
 	opts := []nats.Option{}
+	if this.setting.Token != "" {
+		opts = append(opts, nats.Token(this.setting.Token))
+	}
 	if this.setting.Username != "" && this.setting.Password != "" {
 		opts = append(opts, nats.UserInfo(this.setting.Username, this.setting.Password))
 	}
