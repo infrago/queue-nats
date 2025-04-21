@@ -1,3 +1,3 @@
 module github.com/infrago/queue-nats
 
-go 1.17
+go 1.18
