@@ -3,13 +3,13 @@ module github.com/infrago/queue-nats
 go 1.25.3
 
 require (
-	github.com/infrago/infra v0.0.1
-	github.com/infrago/queue v0.0.1
+	github.com/infrago/infra v0.8.1
+	github.com/infrago/queue v0.8.1
 	github.com/nats-io/nats.go v1.47.0
 )
 
 require (
-	github.com/infrago/base v0.0.0-20260208072247-55b8f46c25df // indirect
+	github.com/infrago/base v0.8.1 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/nats-io/nkeys v0.4.11 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
