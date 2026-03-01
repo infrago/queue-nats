@@ -1,55 +1,33 @@
 # queue-nats
 
-`queue-nats` 是 `queue` 模块的 `nats` 驱动。
+`queue-nats` 是 `github.com/infrago/queue` 的**nats 驱动**。
 
-## 安装
+## 包定位
 
-```bash
-go get github.com/infrago/queue@latest
-go get github.com/infrago/queue-nats@latest
-```
+- 类型：驱动
+- 作用：把 `queue` 模块的统一接口落到 `nats` 后端实现
 
-## 接入
+## 快速接入
 
 ```go
 import (
     _ "github.com/infrago/queue"
     _ "github.com/infrago/queue-nats"
-    "github.com/infrago/infra"
 )
-
-func main() {
-    infra.Run()
-}
 ```
-
-## 配置示例
 
 ```toml
 [queue]
 driver = "nats"
 ```
 
-## 公开 API（摘自源码）
+## `setting` 专用配置项
 
-- `func (d *natsDriver) Connect(inst *queue.Instance) (queue.Connection, error)`
-- `func (c *natsConnection) Open() error`
-- `func (c *natsConnection) Close() error`
-- `func (c *natsConnection) Register(name string) error`
-- `func (c *natsConnection) Start() error`
-- `func (c *natsConnection) Stop() error`
-- `func (c *natsConnection) Publish(name string, data []byte) error`
-- `func (c *natsConnection) DeferredPublish(name string, data []byte, delay time.Duration) error`
-- `func (d *natsJSDriver) Connect(inst *queue.Instance) (queue.Connection, error)`
-- `func (c *natsJSConnection) Open() error`
-- `func (c *natsJSConnection) Close() error`
-- `func (c *natsJSConnection) Register(name string) error`
-- `func (c *natsJSConnection) Start() error`
-- `func (c *natsJSConnection) Stop() error`
-- `func (c *natsJSConnection) Publish(name string, data []byte) error`
-- `func (c *natsJSConnection) DeferredPublish(name string, data []byte, delay time.Duration) error`
+配置位置：`[queue].setting`
 
-## 排错
+- 当前驱动源码未检测到显式 `setting` 键读取，请查看驱动实现
 
-- driver 未生效：确认模块段 `driver` 值与驱动名一致
-- 连接失败：检查 endpoint/host/port/鉴权配置
+## 说明
+
+- `setting` 仅对当前驱动生效，不同驱动键名可能不同
+- 连接失败时优先核对 `setting` 中 host/port/认证/超时等参数
