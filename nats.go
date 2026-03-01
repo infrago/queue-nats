@@ -7,17 +7,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bamgoo/bamgoo"
-	"github.com/bamgoo/queue"
+	"github.com/infrago/infra"
+	"github.com/infrago/queue"
 	"github.com/nats-io/nats.go"
 )
 
 func init() {
-	bamgoo.Register("nats", &natsDriver{})
+	infra.Register("nats", &natsDriver{})
 	js := &natsJSDriver{}
-	bamgoo.Register("natsjs", js)
-	bamgoo.Register("nats-js", js)
-	bamgoo.Register("jetstream", js)
+	infra.Register("natsjs", js)
+	infra.Register("nats-js", js)
+	infra.Register("jetstream", js)
 }
 
 type (
@@ -59,7 +59,7 @@ func parseSetting(inst *queue.Instance) natsSetting {
 	cfg := inst.Config.Setting
 	setting := natsSetting{
 		URL:    nats.DefaultURL,
-		Stream: "BAMGOOQ",
+		Stream: "INFRAGOQ",
 	}
 
 	if v, ok := cfg["url"].(string); ok && v != "" {

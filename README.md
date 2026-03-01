@@ -1,2 +1,2 @@
 # queue-nats
-bamgoo nats queue driver.
+infrago nats queue driver.
