@@ -31,6 +31,8 @@ type (
 		client   *nats.Conn
 		queues   []string
 		subs     []*nats.Subscription
+		done     chan struct{}
+		wg       sync.WaitGroup
 	}
 
 	natsJSDriver struct{}
@@ -44,6 +46,8 @@ type (
 		stream   nats.JetStreamContext
 		queues   []string
 		subs     []*nats.Subscription
+		done     chan struct{}
+		wg       sync.WaitGroup
 	}
 
 	natsSetting struct {
@@ -106,6 +110,7 @@ func (d *natsDriver) Connect(inst *queue.Instance) (queue.Connection, error) {
 		setting:  parseSetting(inst),
 		queues:   make([]string, 0),
 		subs:     make([]*nats.Subscription, 0),
+		done:     make(chan struct{}),
 	}, nil
 }
 
@@ -139,16 +144,35 @@ func (c *natsConnection) Start() error {
 		return nil
 	}
 
+	cleanup := func() {
+		close(c.done)
+		for _, sub := range c.subs {
+			_ = sub.Unsubscribe()
+		}
+		c.wg.Wait()
+		c.subs = nil
+		c.done = make(chan struct{})
+	}
+
 	for _, queueName := range c.queues {
 		name := queueName
 		sub, err := c.client.QueueSubscribeSync(name, name)
 		if err != nil {
+			cleanup()
 			return err
 		}
 		c.subs = append(c.subs, sub)
 
+		c.wg.Add(1)
 		c.instance.Submit(func() {
+			defer c.wg.Done()
 			for {
+				select {
+				case <-c.done:
+					return
+				default:
+				}
+
 				msg, err := sub.NextMsg(time.Second)
 				if err != nil {
 					if err == nats.ErrTimeout {
@@ -158,10 +182,10 @@ func (c *natsConnection) Start() error {
 				}
 
 				now := time.Now()
-				after := int64(0)
+				var after time.Time
 				if vv := msg.Header.Get("after"); vv != "" {
 					if num, err := strconv.ParseInt(vv, 10, 64); err == nil {
-						after = num
+						after = natsAfterTime(num)
 					}
 				}
 				attempt := 1
@@ -171,9 +195,19 @@ func (c *natsConnection) Start() error {
 					}
 				}
 
-				if after > 0 && after > now.Unix() {
-					time.Sleep(time.Second)
-					_ = c.publish(msg.Subject, msg.Data, attempt, time.Unix(after, 0).Sub(now))
+				if !after.IsZero() && after.After(now) {
+					delay := time.Until(after)
+					if delay > time.Second {
+						delay = time.Second
+					}
+					timer := time.NewTimer(delay)
+					select {
+					case <-timer.C:
+					case <-c.done:
+						timer.Stop()
+						return
+					}
+					_ = c.publish(msg.Subject, msg.Data, attempt, time.Until(after))
 					continue
 				}
 
@@ -201,10 +235,13 @@ func (c *natsConnection) Stop() error {
 	if !c.running {
 		return nil
 	}
+	close(c.done)
 	for _, sub := range c.subs {
 		_ = sub.Unsubscribe()
 	}
+	c.wg.Wait()
 	c.subs = nil
+	c.done = make(chan struct{})
 	c.running = false
 	return nil
 }
@@ -215,7 +252,7 @@ func (c *natsConnection) publish(name string, data []byte, attempt int, delay ti
 	msg.Header = nats.Header{}
 	msg.Header.Set("attempt", strconv.Itoa(attempt))
 	if delay > 0 {
-		msg.Header.Set("after", strconv.FormatInt(time.Now().Add(delay).Unix(), 10))
+		msg.Header.Set("after", strconv.FormatInt(time.Now().Add(delay).UnixNano(), 10))
 	}
 	return c.client.PublishMsg(msg)
 }
@@ -234,6 +271,7 @@ func (d *natsJSDriver) Connect(inst *queue.Instance) (queue.Connection, error) {
 		setting:  parseSetting(inst),
 		queues:   make([]string, 0),
 		subs:     make([]*nats.Subscription, 0),
+		done:     make(chan struct{}),
 	}, nil
 }
 
@@ -283,6 +321,16 @@ func (c *natsJSConnection) Start() error {
 		return nil
 	}
 
+	cleanup := func() {
+		close(c.done)
+		for _, sub := range c.subs {
+			_ = sub.Unsubscribe()
+		}
+		c.wg.Wait()
+		c.subs = nil
+		c.done = make(chan struct{})
+	}
+
 	for _, queueName := range c.queues {
 		qName := queueName
 		subject := jsSubject(c.setting.Stream, qName)
@@ -290,16 +338,25 @@ func (c *natsJSConnection) Start() error {
 
 		sub, err := c.stream.QueueSubscribeSync(subject, consumer,
 			nats.Durable(consumer),
-			nats.DeliverNew(),
+			nats.DeliverAll(),
 			nats.ManualAck(),
 		)
 		if err != nil {
+			cleanup()
 			return err
 		}
 		c.subs = append(c.subs, sub)
 
+		c.wg.Add(1)
 		c.instance.Submit(func() {
+			defer c.wg.Done()
 			for {
+				select {
+				case <-c.done:
+					return
+				default:
+				}
+
 				msg, err := sub.NextMsg(time.Second)
 				if err != nil {
 					if err == nats.ErrTimeout {
@@ -355,10 +412,13 @@ func (c *natsJSConnection) Stop() error {
 	if !c.running {
 		return nil
 	}
+	close(c.done)
 	for _, sub := range c.subs {
 		_ = sub.Unsubscribe()
 	}
+	c.wg.Wait()
 	c.subs = nil
+	c.done = make(chan struct{})
 	c.running = false
 	return nil
 }
@@ -385,6 +445,16 @@ func jsSubject(stream, name string) string {
 func jsConsumer(stream, name string) string {
 	name = jsSubject(stream, name)
 	return strings.ReplaceAll(name, ".", "_")
+}
+
+func natsAfterTime(value int64) time.Time {
+	if value <= 0 {
+		return time.Time{}
+	}
+	if value < 1_000_000_000_000 {
+		return time.Unix(value, 0)
+	}
+	return time.Unix(0, value)
 }
 
 var _ queue.Connection = (*natsConnection)(nil)
