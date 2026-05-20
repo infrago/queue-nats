@@ -12,7 +12,6 @@ require (
 	github.com/infrago/base v0.27.0 // indirect
 	github.com/infrago/util v0.27.0 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
-	github.com/kr/text v0.2.0 // indirect
 	github.com/nats-io/nkeys v0.4.11 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.2 // indirect

@@ -24,4 +24,28 @@ func TestJSSubjectAndConsumer(t *testing.T) {
 	if got := jsConsumer("STREAM", "foo.bar"); got != "STREAM_foo_bar" {
 		t.Fatalf("consumer=%q", got)
 	}
+	if got := jsQueueGroup("STREAM", "foo.bar"); got != "STREAM_foo_bar_workers" {
+		t.Fatalf("queue group=%q", got)
+	}
+}
+
+func TestNatsRegisterCountsWorkers(t *testing.T) {
+	conn := &natsConnection{queues: make(map[string]int)}
+	if err := conn.Register("jobs"); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Register("jobs"); err != nil {
+		t.Fatal(err)
+	}
+	if conn.queues["jobs"] != 2 {
+		t.Fatalf("workers=%d, want 2", conn.queues["jobs"])
+	}
+
+	jsConn := &natsJSConnection{queues: make(map[string]int)}
+	if err := jsConn.Register("jobs"); err != nil {
+		t.Fatal(err)
+	}
+	if jsConn.queues["jobs"] != 1 {
+		t.Fatalf("js workers=%d, want 1", jsConn.queues["jobs"])
+	}
 }

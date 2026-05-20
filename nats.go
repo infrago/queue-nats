@@ -29,7 +29,7 @@ type (
 		instance *queue.Instance
 		setting  natsSetting
 		client   *nats.Conn
-		queues   []string
+		queues   map[string]int
 		subs     []*nats.Subscription
 		done     chan struct{}
 		wg       sync.WaitGroup
@@ -44,7 +44,7 @@ type (
 		setting  natsSetting
 		client   *nats.Conn
 		stream   nats.JetStreamContext
-		queues   []string
+		queues   map[string]int
 		subs     []*nats.Subscription
 		done     chan struct{}
 		wg       sync.WaitGroup
@@ -108,7 +108,7 @@ func (d *natsDriver) Connect(inst *queue.Instance) (queue.Connection, error) {
 	return &natsConnection{
 		instance: inst,
 		setting:  parseSetting(inst),
-		queues:   make([]string, 0),
+		queues:   make(map[string]int, 0),
 		subs:     make([]*nats.Subscription, 0),
 		done:     make(chan struct{}),
 	}, nil
@@ -132,7 +132,7 @@ func (c *natsConnection) Close() error {
 
 func (c *natsConnection) Register(name string) error {
 	c.mutex.Lock()
-	c.queues = append(c.queues, name)
+	c.queues[name]++
 	c.mutex.Unlock()
 	return nil
 }
@@ -144,85 +144,22 @@ func (c *natsConnection) Start() error {
 		return nil
 	}
 
-	cleanup := func() {
-		close(c.done)
-		for _, sub := range c.subs {
-			_ = sub.Unsubscribe()
-		}
-		c.wg.Wait()
-		c.subs = nil
-		c.done = make(chan struct{})
-	}
-
-	for _, queueName := range c.queues {
-		name := queueName
-		sub, err := c.client.QueueSubscribeSync(name, name)
-		if err != nil {
-			cleanup()
-			return err
-		}
-		c.subs = append(c.subs, sub)
-
-		c.wg.Add(1)
-		c.instance.Submit(func() {
-			defer c.wg.Done()
-			for {
-				select {
-				case <-c.done:
-					return
-				default:
-				}
-
-				msg, err := sub.NextMsg(time.Second)
-				if err != nil {
-					if err == nats.ErrTimeout {
-						continue
-					}
-					return
-				}
-
-				now := time.Now()
-				var after time.Time
-				if vv := msg.Header.Get("after"); vv != "" {
-					if num, err := strconv.ParseInt(vv, 10, 64); err == nil {
-						after = natsAfterTime(num)
-					}
-				}
-				attempt := 1
-				if vv := msg.Header.Get("attempt"); vv != "" {
-					if num, err := strconv.Atoi(vv); err == nil && num > 0 {
-						attempt = num
-					}
-				}
-
-				if !after.IsZero() && after.After(now) {
-					delay := time.Until(after)
-					if delay > time.Second {
-						delay = time.Second
-					}
-					timer := time.NewTimer(delay)
-					select {
-					case <-timer.C:
-					case <-c.done:
-						timer.Stop()
-						return
-					}
-					_ = c.publish(msg.Subject, msg.Data, attempt, time.Until(after))
-					continue
-				}
-
-				req := queue.Request{
-					Name:      name,
-					Data:      msg.Data,
-					Attempt:   attempt,
-					Timestamp: now,
-				}
-				res := c.instance.Serve(req)
-				if res.Retry {
-					_ = c.publish(name, msg.Data, attempt+1, res.Delay)
-				}
+	for queueName, workers := range c.queues {
+		for i := 0; i < workers; i++ {
+			name := queueName
+			sub, err := c.client.QueueSubscribeSync(name, name)
+			if err != nil {
+				c.cleanup()
+				return err
 			}
-		})
+			c.subs = append(c.subs, sub)
+
+			c.wg.Add(1)
+			c.instance.Submit(func() {
+				defer c.wg.Done()
+				c.consume(name, sub)
+			})
+		}
 	}
 
 	c.running = true
@@ -236,14 +173,91 @@ func (c *natsConnection) Stop() error {
 		return nil
 	}
 	close(c.done)
+	c.stopSubscriptions()
+	c.running = false
+	return nil
+}
+
+func (c *natsConnection) cleanup() {
+	close(c.done)
+	c.stopSubscriptions()
+}
+
+func (c *natsConnection) stopSubscriptions() {
 	for _, sub := range c.subs {
 		_ = sub.Unsubscribe()
 	}
 	c.wg.Wait()
 	c.subs = nil
 	c.done = make(chan struct{})
-	c.running = false
-	return nil
+}
+
+func (c *natsConnection) consume(name string, sub *nats.Subscription) {
+	for {
+		select {
+		case <-c.done:
+			return
+		default:
+		}
+
+		msg, err := sub.NextMsg(time.Second)
+		if err != nil {
+			if err == nats.ErrTimeout {
+				continue
+			}
+			logNatsError("read", name, err)
+			return
+		}
+
+		now := time.Now()
+		var after time.Time
+		if vv := msg.Header.Get("after"); vv != "" {
+			if num, err := strconv.ParseInt(vv, 10, 64); err == nil {
+				after = natsAfterTime(num)
+			} else {
+				logNatsError("parse delay", name, err)
+			}
+		}
+		attempt := 1
+		if vv := msg.Header.Get("attempt"); vv != "" {
+			if num, err := strconv.Atoi(vv); err == nil && num > 0 {
+				attempt = num
+			} else {
+				logNatsError("parse attempt", name, err)
+			}
+		}
+
+		if !after.IsZero() && after.After(now) {
+			delay := time.Until(after)
+			if delay > time.Second {
+				delay = time.Second
+			}
+			timer := time.NewTimer(delay)
+			select {
+			case <-timer.C:
+			case <-c.done:
+				timer.Stop()
+				return
+			}
+			if err := c.publish(msg.Subject, msg.Data, attempt, time.Until(after)); err != nil {
+				logNatsError("defer", name, err)
+			}
+			continue
+		}
+
+		req := queue.Request{
+			Name:      name,
+			Data:      msg.Data,
+			Attempt:   attempt,
+			Timestamp: now,
+		}
+		res := c.instance.Serve(req)
+		if res.Retry {
+			if err := c.publish(name, msg.Data, attempt+1, res.Delay); err != nil {
+				logNatsError("retry", name, err)
+			}
+		}
+	}
 }
 
 func (c *natsConnection) publish(name string, data []byte, attempt int, delay time.Duration) error {
@@ -269,7 +283,7 @@ func (d *natsJSDriver) Connect(inst *queue.Instance) (queue.Connection, error) {
 	return &natsJSConnection{
 		instance: inst,
 		setting:  parseSetting(inst),
-		queues:   make([]string, 0),
+		queues:   make(map[string]int, 0),
 		subs:     make([]*nats.Subscription, 0),
 		done:     make(chan struct{}),
 	}, nil
@@ -309,7 +323,7 @@ func (c *natsJSConnection) Close() error {
 
 func (c *natsJSConnection) Register(name string) error {
 	c.mutex.Lock()
-	c.queues = append(c.queues, name)
+	c.queues[name]++
 	c.mutex.Unlock()
 	return nil
 }
@@ -321,85 +335,30 @@ func (c *natsJSConnection) Start() error {
 		return nil
 	}
 
-	cleanup := func() {
-		close(c.done)
-		for _, sub := range c.subs {
-			_ = sub.Unsubscribe()
-		}
-		c.wg.Wait()
-		c.subs = nil
-		c.done = make(chan struct{})
-	}
+	for queueName, workers := range c.queues {
+		for i := 0; i < workers; i++ {
+			qName := queueName
+			subject := jsSubject(c.setting.Stream, qName)
+			consumer := jsConsumer(c.setting.Stream, qName)
+			group := jsQueueGroup(c.setting.Stream, qName)
 
-	for _, queueName := range c.queues {
-		qName := queueName
-		subject := jsSubject(c.setting.Stream, qName)
-		consumer := jsConsumer(c.setting.Stream, qName)
-
-		sub, err := c.stream.QueueSubscribeSync(subject, consumer,
-			nats.Durable(consumer),
-			nats.DeliverAll(),
-			nats.ManualAck(),
-		)
-		if err != nil {
-			cleanup()
-			return err
-		}
-		c.subs = append(c.subs, sub)
-
-		c.wg.Add(1)
-		c.instance.Submit(func() {
-			defer c.wg.Done()
-			for {
-				select {
-				case <-c.done:
-					return
-				default:
-				}
-
-				msg, err := sub.NextMsg(time.Second)
-				if err != nil {
-					if err == nats.ErrTimeout {
-						continue
-					}
-					return
-				}
-
-				req := queue.Request{
-					Name:      qName,
-					Data:      msg.Data,
-					Attempt:   1,
-					Timestamp: time.Now(),
-				}
-
-				md, err := msg.Metadata()
-				if err != nil {
-					msg.Nak()
-					continue
-				}
-				req.Attempt = int(md.NumDelivered)
-				req.Timestamp = md.Timestamp
-
-				if vv := msg.Header.Get("delay"); vv != "" {
-					if req.Attempt == 1 {
-						delay := time.Duration(0)
-						if num, err := strconv.ParseInt(vv, 10, 64); err == nil {
-							delay = time.Duration(num)
-						}
-						msg.NakWithDelay(delay)
-						continue
-					}
-					req.Attempt--
-				}
-
-				res := c.instance.Serve(req)
-				if res.Retry {
-					msg.NakWithDelay(res.Delay)
-				} else {
-					msg.Ack()
-				}
+			sub, err := c.stream.QueueSubscribeSync(subject, group,
+				nats.Durable(consumer),
+				nats.DeliverAll(),
+				nats.ManualAck(),
+			)
+			if err != nil {
+				c.cleanup()
+				return err
 			}
-		})
+			c.subs = append(c.subs, sub)
+
+			c.wg.Add(1)
+			c.instance.Submit(func() {
+				defer c.wg.Done()
+				c.consume(qName, sub)
+			})
+		}
 	}
 
 	c.running = true
@@ -413,14 +372,101 @@ func (c *natsJSConnection) Stop() error {
 		return nil
 	}
 	close(c.done)
+	c.stopSubscriptions()
+	c.running = false
+	return nil
+}
+
+func (c *natsJSConnection) cleanup() {
+	close(c.done)
+	c.stopSubscriptions()
+}
+
+func (c *natsJSConnection) stopSubscriptions() {
 	for _, sub := range c.subs {
 		_ = sub.Unsubscribe()
 	}
 	c.wg.Wait()
 	c.subs = nil
 	c.done = make(chan struct{})
-	c.running = false
-	return nil
+}
+
+func (c *natsJSConnection) consume(qName string, sub *nats.Subscription) {
+	for {
+		select {
+		case <-c.done:
+			return
+		default:
+		}
+
+		msg, err := sub.NextMsg(time.Second)
+		if err != nil {
+			if err == nats.ErrTimeout {
+				continue
+			}
+			logNatsError("read", qName, err)
+			return
+		}
+
+		req := queue.Request{
+			Name:      qName,
+			Data:      msg.Data,
+			Attempt:   1,
+			Timestamp: time.Now(),
+		}
+
+		md, err := msg.Metadata()
+		if err != nil {
+			logNatsError("metadata", qName, err)
+			if err := msg.Nak(); err != nil {
+				logNatsError("nak", qName, err)
+			}
+			continue
+		}
+		req.Attempt = int(md.NumDelivered)
+		req.Timestamp = md.Timestamp
+
+		if vv := msg.Header.Get("after"); vv != "" {
+			after := time.Time{}
+			if num, err := strconv.ParseInt(vv, 10, 64); err == nil {
+				after = natsAfterTime(num)
+			} else {
+				logNatsError("parse delay", qName, err)
+			}
+			if !after.IsZero() && after.After(time.Now()) {
+				if err := msg.NakWithDelay(time.Until(after)); err != nil {
+					logNatsError("delay", qName, err)
+				}
+				continue
+			}
+			if req.Attempt > 1 {
+				req.Attempt--
+			}
+		} else if vv := msg.Header.Get("delay"); vv != "" {
+			delay := time.Duration(0)
+			if num, err := strconv.ParseInt(vv, 10, 64); err == nil {
+				delay = time.Duration(num)
+			} else {
+				logNatsError("parse delay", qName, err)
+			}
+			if req.Attempt == 1 && delay > 0 {
+				if err := msg.NakWithDelay(delay); err != nil {
+					logNatsError("delay", qName, err)
+				}
+				continue
+			}
+			req.Attempt--
+		}
+
+		res := c.instance.Serve(req)
+		if res.Retry {
+			if err := msg.NakWithDelay(res.Delay); err != nil {
+				logNatsError("retry", qName, err)
+			}
+		} else if err := msg.Ack(); err != nil {
+			logNatsError("ack", qName, err)
+		}
+	}
 }
 
 func (c *natsJSConnection) Publish(name string, data []byte) error {
@@ -432,7 +478,7 @@ func (c *natsJSConnection) DeferredPublish(name string, data []byte, delay time.
 	msg := nats.NewMsg(jsSubject(c.setting.Stream, name))
 	msg.Data = data
 	msg.Header = nats.Header{}
-	msg.Header.Set("delay", fmt.Sprintf("%d", delay))
+	msg.Header.Set("after", fmt.Sprintf("%d", time.Now().Add(delay).UnixNano()))
 	_, err := c.stream.PublishMsg(msg)
 	return err
 }
@@ -447,6 +493,10 @@ func jsConsumer(stream, name string) string {
 	return strings.ReplaceAll(name, ".", "_")
 }
 
+func jsQueueGroup(stream, name string) string {
+	return jsConsumer(stream, name) + "_workers"
+}
+
 func natsAfterTime(value int64) time.Time {
 	if value <= 0 {
 		return time.Time{}
@@ -455,6 +505,12 @@ func natsAfterTime(value int64) time.Time {
 		return time.Unix(value, 0)
 	}
 	return time.Unix(0, value)
+}
+
+func logNatsError(action, name string, err error) {
+	if err != nil {
+		fmt.Printf("infrago queue nats %s failed on %s: %v\n", action, name, err)
+	}
 }
 
 var _ queue.Connection = (*natsConnection)(nil)

@@ -25,9 +25,14 @@ driver = "nats"
 
 配置位置：`[queue].setting`
 
-- 当前驱动源码未检测到显式 `setting` 键读取，请查看驱动实现
+- `url` / `server`
+- `token`
+- `user` / `username`
+- `pass` / `password`
+- `stream`（JetStream，默认 `INFRAGOQ`）
 
 ## 说明
 
+- 普通 NATS 延迟发布是 best-effort；需要持久队列语义时使用 `natsjs` / `nats-js` / `jetstream`
 - `setting` 仅对当前驱动生效，不同驱动键名可能不同
 - 连接失败时优先核对 `setting` 中 host/port/认证/超时等参数
